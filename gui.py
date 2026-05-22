@@ -34,6 +34,7 @@ class ArchiveCategorizerApp:
 
         # Brute-force state
         self.bf_archives = []       # list of (abspath, relpath) for unmatched archives
+        self.bf_src_paths = []      # list of selected source folders/files for brute-force
         self.bf_current_folder = ""
 
         self.create_widgets()
@@ -153,31 +154,58 @@ class ArchiveCategorizerApp:
         tab = ttk.Frame(self.notebook, padding=8)
         self.notebook.add(tab, text="暴力破解")
 
-        # Top controls
+        # Row 1: Source selection
+        src_f = ttk.LabelFrame(tab, text="源文件/文件夹（可添加多个）", padding=6)
+        src_f.pack(fill=tk.X, pady=(0, 6))
+        lf = ttk.Frame(src_f)
+        lf.pack(fill=tk.X, pady=(0, 4))
+        self.bf_src_listbox = tk.Listbox(lf, height=3, font=("Consolas", 10))
+        sb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self.bf_src_listbox.yview)
+        self.bf_src_listbox.configure(yscrollcommand=sb.set)
+        self.bf_src_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        sr = ttk.Frame(src_f)
+        sr.pack(fill=tk.X)
+        ttk.Button(sr, text="添加文件夹", command=self._bf_add_folder).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(sr, text="添加文件", command=self._bf_add_files).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(sr, text="删除选中", command=self._bf_remove_src).pack(side=tk.LEFT)
+
+        # Row 2: Destination + Password
+        opt_f = ttk.Frame(tab)
+        opt_f.pack(fill=tk.X, pady=(0, 6))
+        # Destination (reuse global)
+        df = ttk.LabelFrame(opt_f, text="目标文件夹", padding=6)
+        df.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        dr = ttk.Frame(df)
+        dr.pack(fill=tk.X)
+        self.bf_dest_entry = ttk.Entry(dr, textvariable=self.dest_dir, state="readonly", font=("Consolas", 10))
+        self.bf_dest_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Button(dr, text="浏览", command=self.browse_dest).pack(side=tk.RIGHT)
+        # Password file
+        pf = ttk.LabelFrame(opt_f, text="密码文件（发现新密码将自动保存）", padding=6)
+        pf.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        pr = ttk.Frame(pf)
+        pr.pack(fill=tk.X)
+        self.bf_pwd_entry = ttk.Entry(pr, textvariable=self.password_file, state="readonly", font=("Consolas", 10))
+        self.bf_pwd_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Button(pr, text="浏览", command=self.browse_password).pack(side=tk.RIGHT, padx=(0, 4))
+        ttk.Button(pr, text="新建", command=self._bf_create_pwdfile).pack(side=tk.RIGHT)
+
+        # Row 3: Settings + Start
         ctrl = ttk.Frame(tab)
         ctrl.pack(fill=tk.X, pady=(0, 6))
-        ttk.Button(ctrl, text="扫描未匹配文件", command=self._bf_scan_unmatched).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(ctrl, text="最大位数:").pack(side=tk.LEFT, padx=(0, 4))
         self.bf_length_var = tk.IntVar(value=3)
-        ttk.Spinbox(ctrl, from_=1, to=4, textvariable=self.bf_length_var, width=4).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Spinbox(ctrl, from_=1, to=4, textvariable=self.bf_length_var, width=4,
+                    command=self._bf_update_estimate).pack(side=tk.LEFT, padx=(0, 10))
+        self.bf_spin = None  # will bind later
         self.bf_est_label = ttk.Label(ctrl, text="", foreground="gray")
         self.bf_est_label.pack(side=tk.LEFT, padx=(0, 10))
         self.bf_start_btn = ttk.Button(ctrl, text="开始暴力破解", command=self._bf_start,
-                                       state=tk.DISABLED, style="Accent.TButton")
+                                       style="Accent.TButton")
         self.bf_start_btn.pack(side=tk.LEFT)
 
-        # Unmatched archive list
-        list_f = ttk.LabelFrame(tab, text="待破解的压缩包", padding=5)
-        list_f.pack(fill=tk.X, pady=(0, 6))
-        lf_row = ttk.Frame(list_f)
-        lf_row.pack(fill=tk.X)
-        self.bf_listbox = tk.Listbox(lf_row, height=5, font=("Consolas", 10))
-        sb_bf = ttk.Scrollbar(lf_row, orient=tk.VERTICAL, command=self.bf_listbox.yview)
-        self.bf_listbox.configure(yscrollcommand=sb_bf.set)
-        self.bf_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        sb_bf.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # BF progress
+        # Progress
         bf_prog = ttk.Frame(tab)
         bf_prog.pack(fill=tk.X, pady=(0, 4))
         self.bf_progress_bar = ttk.Progressbar(bf_prog, mode="determinate")
@@ -185,7 +213,7 @@ class ArchiveCategorizerApp:
         self.bf_progress_label = ttk.Label(bf_prog, text="", width=30, anchor=tk.W)
         self.bf_progress_label.pack(side=tk.RIGHT)
 
-        # BF results table
+        # Results table
         res_f = ttk.LabelFrame(tab, text="暴力破解结果", padding=5)
         res_f.pack(fill=tk.BOTH, expand=True)
         cols = ("file", "password", "status")
@@ -201,7 +229,8 @@ class ArchiveCategorizerApp:
         self.bf_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb_bfr.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.bf_listbox.bind("<<ListboxSelect>>", self._bf_update_estimate)
+        self.bf_length_var.trace("w", lambda *a: self._bf_update_estimate())
+        self._bf_update_estimate()
 
     def _bf_update_estimate(self, event=None):
         max_len = self.bf_length_var.get()
