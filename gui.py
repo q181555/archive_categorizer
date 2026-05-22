@@ -272,10 +272,12 @@ class ArchiveCategorizerApp:
         thread.start()
 
     def _bf_run(self, bf_length):
+        import shutil
         dest = self.dest_dir.get()
         count = len(self.bf_archives)
         bf_hits = []
         bf_index = 0
+        discovered_passwords = []
 
         try:
             for abs_path, rel_path in self.bf_archives:
@@ -283,18 +285,28 @@ class ArchiveCategorizerApp:
                 tried = 0
                 bf_index += 1
 
-                for pwd in generate_bruteforce_passwords(bf_length):
+                # Try already-discovered passwords first
+                for dp in discovered_passwords:
                     tried += 1
-                    if tried % 50 == 0 or tried <= 5:
-                        msg = "[%d/%d] %s - 尝试: %s (已试%d个)" % (bf_index, count, rel_path, pwd, tried)
+                    if test_password(abs_path, dp):
+                        bf_pwd = dp
+                        msg = "[%d/%d] %s - 复用密码: %s" % (bf_index, count, rel_path, dp)
                         self.root.after(0, self._bf_update_progress, bf_index, count, msg)
-
-                    if test_password(abs_path, pwd):
-                        bf_pwd = pwd
                         break
 
+                # Brute-force if not matched
+                if not bf_pwd:
+                    for pwd in generate_bruteforce_passwords(bf_length):
+                        tried += 1
+                        if tried % 50 == 0 or tried <= 5:
+                            msg = "[%d/%d] %s - 尝试: %s (已试%d个)" % (bf_index, count, rel_path, pwd, tried)
+                            self.root.after(0, self._bf_update_progress, bf_index, count, msg)
+                        if test_password(abs_path, pwd):
+                            bf_pwd = pwd
+                            discovered_passwords.append(pwd)
+                            break
+
                 if bf_pwd:
-                    # Move to password folder
                     pwd_dir = os.path.join(dest, "密码：" + bf_pwd)
                     os.makedirs(pwd_dir, exist_ok=True)
                     parts = get_multi_volume_parts(Path(abs_path))
@@ -303,19 +315,21 @@ class ArchiveCategorizerApp:
                                     self.bf_current_folder else Path(abs_path).parent)
                         p.parent.mkdir(parents=True, exist_ok=True)
                         if part.exists():
-                            import shutil
                             shutil.move(str(part), str(p))
 
+                    is_reused = tried <= len(discovered_passwords) if discovered_passwords else False
+                    last_new = discovered_passwords[-1] if discovered_passwords else None
                     status = "破解成功！密码：" + bf_pwd
+                    if is_reused and bf_pwd != last_new:
+                        status = "复用成功！密码：" + bf_pwd
                     bf_hits.append((rel_path, bf_pwd, "成功"))
                 else:
                     bf_hits.append((rel_path, None, "未破解"))
                     status = "未破解"
-                    self.root.after(0, self._bf_insert_result, rel_path, None, "未破解")
 
                 self.root.after(0, self._bf_insert_result, rel_path, bf_pwd or "-", status)
 
-            self.root.after(0, self._bf_complete, bf_hits)
+            self.root.after(0, self._bf_complete, bf_hits, discovered_passwords)
         except Exception as e:
             self.root.after(0, self._bf_error, str(e))
 
@@ -343,6 +357,39 @@ class ArchiveCategorizerApp:
         if success > 0:
             self.notebook.select(0)  # Switch to results tab
             messagebox.showinfo("提示", "部分文件已破解，请重新运行分类以更新结果表格")
+
+    def _bf_scan_and_retry(self, new_passwords):
+        import shutil
+        dest = self.dest_dir.get()
+        if not dest:
+            return
+        unsolved_dir = os.path.join(dest, "未匹配密码")
+        if not os.path.isdir(unsolved_dir):
+            return
+
+        matched_any = False
+        for root, dirs, files in os.walk(unsolved_dir):
+            for f in files:
+                fp = os.path.join(root, f)
+                for pwd in new_passwords:
+                    if test_password(fp, pwd):
+                        pwd_dir = os.path.join(dest, "密码：" + pwd)
+                        os.makedirs(pwd_dir, exist_ok=True)
+                        parts = get_multi_volume_parts(Path(fp))
+                        for part in parts:
+                            p = Path(pwd_dir) / part.relative_to(Path(unsolved_dir))
+                            p.parent.mkdir(parents=True, exist_ok=True)
+                            if part.exists():
+                                shutil.move(str(part), str(p))
+                        matched_any = True
+                        break
+
+        if matched_any:
+            messagebox.showinfo("完成", "新密码已尝试用于其他未匹配文件！\n请返回分类结果标签页，重新运行分类。")
+            self.notebook.select(0)
+            self._bf_scan_unmatched()
+        else:
+            messagebox.showinfo("提示", "新密码未匹配到其他文件。")
 
     def _bf_error(self, error_msg):
         self.bf_start_btn.config(state=tk.NORMAL)
