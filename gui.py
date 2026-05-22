@@ -25,6 +25,8 @@ class ArchiveCategorizerApp:
         self.dest_dir = tk.StringVar()
         self.password_file = tk.StringVar()
         self.move_mode = tk.BooleanVar(value=False)
+        self.bf_after_enabled = tk.BooleanVar(value=False)
+        self.bf_after_length = tk.IntVar(value=3)
 
         # Pagination state
         self.all_results = []
@@ -94,7 +96,11 @@ class ArchiveCategorizerApp:
         self.start_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(act_frame, text="清空结果", command=self.clear_results).pack(side=tk.LEFT, padx=(0, 20))
         ttk.Checkbutton(act_frame, text="移动文件（删除源文件）",
-                        variable=self.move_mode).pack(side=tk.LEFT, padx=(0, 15))
+                        variable=self.move_mode).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Checkbutton(act_frame, text="暴力破解",
+                        variable=self.bf_after_enabled).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Spinbox(act_frame, from_=1, to=4, textvariable=self.bf_after_length,
+                    width=4).pack(side=tk.LEFT, padx=(0, 15))
 
         # --- 进度条 ---
         prog_frame = ttk.Frame(main_frame)
@@ -239,6 +245,75 @@ class ArchiveCategorizerApp:
         self.bf_est_label.config(text="共 %d 种组合，%s" % (total, time_str), foreground=color)
 
     # ========== 暴力破解：扫描未匹配 ==========
+    # ========== ?????????? ==========
+    def _bf_add_folder(self):
+        d = filedialog.askdirectory(title="???????????")
+        if d and d not in self.bf_src_paths:
+            self.bf_src_paths.append(d)
+            self._bf_refresh_src_list()
+            self._bf_scan_sources()
+
+    def _bf_add_files(self):
+        files = filedialog.askopenfilenames(
+            title="????????????",
+            filetypes=[("???", "*.zip *.7z *.rar *.tar *.gz *.tgz *.bz2 *.xz"), ("????", "*.*")]
+        )
+        if files:
+            for f in files:
+                if f not in self.bf_src_paths:
+                    self.bf_src_paths.append(f)
+            self._bf_refresh_src_list()
+            self._bf_scan_sources()
+
+    def _bf_remove_src(self):
+        sel = self.bf_src_listbox.curselection()
+        if sel and 0 <= sel[0] < len(self.bf_src_paths):
+            del self.bf_src_paths[sel[0]]
+            self._bf_refresh_src_list()
+            self._bf_scan_sources()
+
+    def _bf_refresh_src_list(self):
+        self.bf_src_listbox.delete(0, tk.END)
+        for p in self.bf_src_paths:
+            display = p if len(p) < 60 else "..." + p[-57:]
+            self.bf_src_listbox.insert(tk.END, display)
+
+    def _bf_scan_sources(self):
+        self.bf_archives = []
+        self.bf_tree.delete(*self.bf_tree.get_children())
+        for src in self.bf_src_paths:
+            if os.path.isdir(src):
+                for root, dirs, files in os.walk(src):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        from pathlib import Path
+                        if is_archive_file(Path(fp)) or f.lower().endswith(".001"):
+                            rel = os.path.relpath(fp, src)
+                            self.bf_archives.append((fp, rel))
+            elif os.path.isfile(src):
+                fname = os.path.basename(src)
+                from pathlib import Path
+                if is_archive_file(Path(src)) or fname.lower().endswith(".001"):
+                    self.bf_archives.append((src, fname))
+        if self.bf_archives:
+            self.bf_start_btn.config(state=tk.NORMAL)
+            self.status_bar.config(text="?? %d ????" % len(self.bf_archives))
+        else:
+            self.bf_start_btn.config(state=tk.DISABLED)
+            self.status_bar.config(text="????????")
+        self._bf_update_estimate()
+
+    def _bf_create_pwdfile(self):
+        fp = filedialog.asksaveasfilename(title="新建密码文件", defaultextension=".txt",
+                                          filetypes=[("文本文件", "*.txt")], initialfile="passwords.txt")
+        if fp:
+            try:
+                with open(fp, "w", encoding="utf-8") as f:
+                    f.write("# password file - one per line\n")
+                self.password_file.set(fp)
+                self.status_bar.config(text="created new password file")
+            except Exception as e:
+                messagebox.showerror("error", "create failed: " + str(e))
     def _bf_scan_unmatched(self):
         dest = self.dest_dir.get()
         if not dest:
@@ -546,14 +621,15 @@ class ArchiveCategorizerApp:
         self.start_btn.config(state=tk.DISABLED)
         self.clear_results()
 
+        bf_len = self.bf_after_length.get() if self.bf_after_enabled.get() else 0
         thread = threading.Thread(
             target=self._run_categorize,
-            args=(list(self.source_dirs), self.dest_dir.get(), passwords, self.move_mode.get()),
+            args=(list(self.source_dirs), self.dest_dir.get(), passwords, self.move_mode.get(), bf_len),
             daemon=True
         )
         thread.start()
 
-    def _run_categorize(self, source_dirs, dest_dir, passwords, move_files):
+    def _run_categorize(self, source_dirs, dest_dir, passwords, move_files, bf_length=0):
         all_stats = {"total": 0, "success": 0, "failed": 0, "results": [], "warnings": []}
         overall_total = 0
         for sd in source_dirs:
@@ -572,7 +648,8 @@ class ArchiveCategorizerApp:
 
                 stats = categorize_archives(sd, dest_dir, passwords,
                                             progress_callback=mk_progress(processed),
-                                            move_files=move_files)
+                                            move_files=move_files,
+                                            bruteforce_max_length=bf_length)
                 for fname, pwd, status in stats["results"]:
                     all_stats["results"].append((fname, os.path.basename(sd), pwd, status))
                 all_stats["total"] += stats["total"]
