@@ -1,0 +1,4 @@
+﻿# 依赖说明：
+# - zipfile：Python 内置，无需安装，用于处理 ZIP 格式
+# - 如需支持 7z/RAR 格式，建议安装 7-Zip (https://7-zip.org/) 并加入 PATH
+# - py7zr (pip install py7zr)：可选的纯 Python 7z 支持，未安装时自动降级到 7z CLI
