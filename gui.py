@@ -26,7 +26,7 @@ class ArchiveCategorizerApp:
         self.password_file = tk.StringVar()
         self.move_mode = tk.BooleanVar(value=False)
         self.bf_after_enabled = tk.BooleanVar(value=False)
-        self.bf_after_length = tk.IntVar(value=3)
+        self.bf_after_length = tk.IntVar(value=2)
 
         # Pagination state
         self.all_results = []
@@ -201,7 +201,7 @@ class ArchiveCategorizerApp:
         ctrl = ttk.Frame(tab)
         ctrl.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(ctrl, text="最大位数:").pack(side=tk.LEFT, padx=(0, 4))
-        self.bf_length_var = tk.IntVar(value=3)
+        self.bf_length_var = tk.IntVar(value=2)
         ttk.Spinbox(ctrl, from_=1, to=4, textvariable=self.bf_length_var, width=4,
                     command=self._bf_update_estimate).pack(side=tk.LEFT, padx=(0, 10))
         self.bf_spin = None  # will bind later
